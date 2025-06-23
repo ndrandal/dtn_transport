@@ -3,16 +3,18 @@
 
 #include <string>
 #include <vector>
+#include <map>
 
-/// Loads a single-line CSV header file of field names.
+/// Loads CSV header files into named schemas.
 class SchemaLoader {
 public:
-    /// Reads a CSV file where the first row is your field names.
-    static bool load(const std::string& filePath);
+    /// Load a CSV header (single row) from filePath into schema "id".
+    static bool load(const std::string& id, const std::string& filePath);
 
-    /// After load(), holds the ordered list of field names.
-    static const std::vector<std::string>& fields();
+    /// Retrieve the field list for the named schema.
+    static const std::vector<std::string>& fields(const std::string& id);
 
 private:
-    static std::vector<std::string> fieldNames_;
+    /// Storage for all loaded schemas
+    static std::map<std::string, std::vector<std::string>> schemas_;
 };

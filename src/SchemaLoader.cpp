@@ -4,36 +4,39 @@
 #include <sstream>
 #include <iostream>
 
-std::vector<std::string> SchemaLoader::fieldNames_;
+// Definition of the static member
+std::map<std::string, std::vector<std::string>> SchemaLoader::schemas_;
 
-bool SchemaLoader::load(const std::string& filePath) {
+bool SchemaLoader::load(const std::string& id, const std::string& filePath) {
     std::ifstream in(filePath);
     if (!in.is_open()) {
-        std::cerr << "SchemaLoader: cannot open schema file: " << filePath << "\n";
+        std::cerr << "SchemaLoader: cannot open schema file '"
+                  << filePath << "' for id '" << id << "'\n";
         return false;
     }
-
     std::string line;
     if (!std::getline(in, line)) {
-        std::cerr << "SchemaLoader: empty schema file\n";
+        std::cerr << "SchemaLoader: empty schema file for id '"
+                  << id << "'\n";
         return false;
     }
-
     std::istringstream ss(line);
     std::string token;
-    fieldNames_.clear();
+    std::vector<std::string> fields;
     while (std::getline(ss, token, ',')) {
-        fieldNames_.push_back(token);
+        fields.push_back(token);
     }
-
-    if (fieldNames_.empty()) {
-        std::cerr << "SchemaLoader: no fields parsed\n";
+    if (fields.empty()) {
+        std::cerr << "SchemaLoader: no fields parsed for id '"
+                  << id << "'\n";
         return false;
     }
-    std::cout << "SchemaLoader: loaded " << fieldNames_.size() << " fields\n";
+    schemas_[id] = std::move(fields);
+    std::cout << "SchemaLoader: loaded " << schemas_[id].size()
+              << " fields for '" << id << "'\n";
     return true;
 }
 
-const std::vector<std::string>& SchemaLoader::fields() {
-    return fieldNames_;
+const std::vector<std::string>& SchemaLoader::fields(const std::string& id) {
+    return schemas_.at(id);
 }

@@ -1,0 +1,56 @@
+# === Build files ===
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmakes_install.cmake
+/install_manifest.txt
+Makefile
+*.cmake.user
+
+# === Visual Studio ===
+*.sln
+*.vcxproj*
+*.vcxproj.filters
+*.vcxproj.user
+*.vcxproj.userosscache
+*.VC.db
+*.opensdf
+*.sdf
+*.suo
+*.user
+*.idb
+*.ilk
+
+# === Binaries and libraries ===
+*.exe
+*.out
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+
+# === Object files ===
+*.obj
+*.o
+*.lo
+
+# === Logs and temporary files ===
+*.log
+*.tmp
+*.temp
+
+# === OS Files ===
+.DS_Store
+Thumbs.db
+
+# === IDE / Editor ===
+.vscode/
+.idea/
+
+# === Third-party / external libs (if you ever vendored them) ===
+/thirdparty/
+
+# === Ignore generated config copies (if you don’t want to commit them) ===
+# (Uncomment if you prefer not to version your config folder)
+/config/
