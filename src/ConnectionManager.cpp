@@ -1,5 +1,6 @@
 // File: src/ConnectionManager.cpp
 #include "ConnectionManager.h"
+#include <boost/asio/write.hpp>
 #include <iostream>
 
 ConnectionManager::ConnectionManager(boost::asio::io_context& ioc,
@@ -11,8 +12,12 @@ ConnectionManager::ConnectionManager(boost::asio::io_context& ioc,
     port_(port)
 {}
 
-void ConnectionManager::setMessageHandler(MessageHandler handler) {
-    handler_ = std::move(handler);
+void ConnectionManager::setConnectHandler(ConnectHandler h) {
+    onConnect_ = std::move(h);
+}
+
+void ConnectionManager::setMessageHandler(MessageHandler h) {
+    onMessage_ = std::move(h);
 }
 
 void ConnectionManager::start() {
@@ -25,51 +30,58 @@ void ConnectionManager::stop() {
     socket_.close(ec);
 }
 
+void ConnectionManager::send(const std::string& cmd) {
+    // post to io_context so it's safe even if called from a handler
+    boost::asio::post(ioc_, [this, cmd]() {
+        boost::system::error_code ec;
+        boost::asio::write(socket_, boost::asio::buffer(cmd), ec);
+        if (ec) {
+            std::cerr << "Send error: " << ec.message() << "\n";
+        }
+    });
+}
+
 void ConnectionManager::doConnect() {
-    auto endpoint = boost::asio::ip::tcp::endpoint{
+    auto ep = boost::asio::ip::tcp::endpoint{
         boost::asio::ip::make_address(host_), port_};
-    socket_.async_connect(endpoint,
-        [this](auto ec) { onConnect(ec); });
+    socket_.async_connect(ep,
+        [this](auto ec){ onConnect(ec); });
 }
 
 void ConnectionManager::onConnect(const boost::system::error_code& ec) {
     if (stopped_) return;
     if (ec) {
-        std::cerr << "ConnectionManager: connect error: " << ec.message() << "\n";
-        // retry after delay
+        std::cerr << "Connect error: " << ec.message() << "\n";
+        // retry after 5s
         boost::asio::steady_timer t{ioc_, std::chrono::seconds(5)};
         t.async_wait([this](auto){ doConnect(); });
         return;
     }
-    std::cout << "ConnectionManager: connected to " << host_ << ":" << port_ << "\n";
+    std::cout << "Connected to " << host_ << ":" << port_ << "\n";
+    if (onConnect_) onConnect_();
     doReadLine();
 }
 
 void ConnectionManager::doReadLine() {
     if (stopped_) return;
     boost::asio::async_read_until(socket_, buffer_, '\n',
-        [this](auto ec, auto bytes_transferred){
-            onReadLine(ec, bytes_transferred);
-        });
+        [this](auto ec, auto n){ onReadLine(ec, n); });
 }
 
 void ConnectionManager::onReadLine(const boost::system::error_code& ec,
-                                   std::size_t /*bytes_transferred*/)
-{
+                                   std::size_t /*n*/) {
     if (stopped_) return;
     if (ec) {
-        std::cerr << "ConnectionManager: read error: " << ec.message() << "\n";
+        std::cerr << "Read error: " << ec.message() << "\n";
         socket_.close();
         doConnect();
         return;
     }
-
     std::istream is(&buffer_);
     std::string line;
     std::getline(is, line);
-    if (!line.empty() && handler_) {
-        handler_(line);
+    if (!line.empty() && onMessage_) {
+        onMessage_(line);
     }
-
     doReadLine();
 }
