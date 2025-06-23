@@ -3,10 +3,15 @@
 
 #include <rapidjson/document.h>
 #include <string>
+#include <vector>
 
-/// Parses a CSV tick line into a RapidJSON document using SchemaLoader::fields().
+/// Parses CSV lines into properly-typed JSON.
+/// Converts known numeric fields, merges Date+Time into ISO timestamp.
 class MessageDecoder {
 public:
-    /// Returns true on successful parse, false otherwise.
-    static bool decode(const std::string& csvLine, rapidjson::Document& doc);
+    /// Decode a CSV line (using keys) into a JSON doc.
+    /// Returns false on parse error.
+    static bool decode(const std::vector<std::string>& keys,
+                       const std::string& csvLine,
+                       rapidjson::Document& doc);
 };
