@@ -15,7 +15,7 @@ bool MessageDecoder::decode(const std::vector<std::string>& keys,
         std::cerr << "MessageDecoder: empty schema\n";
         return false;
     }
-
+    
     // Fields that should be treated as integers or floats:
     static const std::unordered_set<std::string> intFields = {
         "Order Size","Total Volume","Bid Size","Ask Size",
