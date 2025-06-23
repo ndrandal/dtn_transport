@@ -14,6 +14,10 @@
 #include <vector>
 #include <string>
 
+static thread_local rapidjson::Document    _reuseDoc;
+static thread_local rapidjson::StringBuffer _reuseSb;
+static thread_local rapidjson::Writer<rapidjson::StringBuffer> _reuseWriter{_reuseSb};
+
 // trim helper
 static std::string trim(const std::string& s) {
     auto ws = " \t\r\n";
@@ -115,22 +119,27 @@ int main() {
                 return;
             }
 
-            rapidjson::Document d;
-            if (!MessageDecoder::decode(SchemaLoader::fields("L1"), msg, d)) {
-                std::cout << "Couldnt decode feilds\n";
+            // Reset & reuse the JSON Document
+            _reuseDoc.SetObject();
+            if (!MessageDecoder::decode(SchemaLoader::fields("L1"), msg, _reuseDoc))
                 return;
-            }
 
-            auto& a = d.GetAllocator();
-            d.AddMember("feed", rapidjson::Value("L1", a), a);
-            d.AddMember("messageType",
-                        rapidjson::Value(std::string(1,mt).c_str(), a), a);
+            // Tag it
+            auto& a1 = _reuseDoc.GetAllocator();
+            _reuseDoc.AddMember("feed",
+                                rapidjson::Value("L1", a1),
+                                a1);
+            _reuseDoc.AddMember("messageType",
+                                rapidjson::Value(std::string(1,mt).c_str(), a1),
+                                a1);
 
-            rapidjson::StringBuffer sb;
-            rapidjson::Writer<rapidjson::StringBuffer> w(sb);
-            d.Accept(w);
-            std::cout << "maade it here\n";
-            ws.broadcast(sb.GetString());
+            // Serialize into the shared buffer
+            _reuseSb.Clear();
+            _reuseWriter.Reset(_reuseSb);
+            _reuseDoc.Accept(_reuseWriter);
+
+            // Broadcast from the shared buffer
+            ws.broadcast(_reuseSb.GetString());
         });
         tickConn.start();
         std::cout << "Connecting to L1 feed on 127.0.0.1:5009\n";
@@ -150,19 +159,27 @@ int main() {
             if (!(mt=='0'||mt=='3'||mt=='4'||mt=='5'||
                   mt=='6'||mt=='7'||mt=='8'||mt=='9')) return;
 
-            rapidjson::Document d;
-            if (!MessageDecoder::decode(SchemaLoader::fields("L2"), msg, d))
+            // Reset & reuse the JSON Document
+            _reuseDoc.SetObject();
+            if (!MessageDecoder::decode(SchemaLoader::fields("L2"), msg, _reuseDoc))
                 return;
 
-            auto& a = d.GetAllocator();
-            d.AddMember("feed", rapidjson::Value("L2", a), a);
-            d.AddMember("messageType",
-                        rapidjson::Value(std::string(1,mt).c_str(), a), a);
+            // Tag it
+            auto& a2 = _reuseDoc.GetAllocator();
+            _reuseDoc.AddMember("feed",
+                                rapidjson::Value("L2", a2),
+                                a2);
+            _reuseDoc.AddMember("messageType",
+                                rapidjson::Value(std::string(1,mt).c_str(), a2),
+                                a2);
 
-            rapidjson::StringBuffer sb;
-            rapidjson::Writer<rapidjson::StringBuffer> w(sb);
-            d.Accept(w);
-            ws.broadcast(sb.GetString());
+            // Serialize into the shared buffer
+            _reuseSb.Clear();
+            _reuseWriter.Reset(_reuseSb);
+            _reuseDoc.Accept(_reuseWriter);
+
+            // Broadcast from the shared buffer
+            ws.broadcast(_reuseSb.GetString());
         });
         depthConn.start();
         std::cout << "Connecting to L2 feed on 127.0.0.1:9200\n";
