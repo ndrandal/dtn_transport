@@ -48,9 +48,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# === Third-party / external libs (if you ever vendored them) ===
+# === Third-party / external libs ===
 /thirdparty/
 
-# === Ignore generated config copies (if you don’t want to commit them) ===
-# (Uncomment if you prefer not to version your config folder)
-/config/
+/config/*
+!/config/.gitkeep
+
