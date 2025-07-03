@@ -1,5 +1,5 @@
-// File: src/main.cpp
 
+// File: src/main.cpp
 #include "SchemaLoader.h"
 #include "MessageDecoder.h"
 #include "ConnectionManager.h"
@@ -18,25 +18,18 @@ static thread_local rapidjson::Document    _reuseDoc;
 static thread_local rapidjson::StringBuffer _reuseSb;
 static thread_local rapidjson::Writer<rapidjson::StringBuffer> _reuseWriter{_reuseSb};
 
-// trim helper
 static std::string trim(const std::string& s) {
-    auto ws = " \t\r\n";
+    const auto ws = " \t\r\n";
     auto l = s.find_first_not_of(ws);
     auto r = s.find_last_not_of(ws);
-    return (l == std::string::npos) ? "" : s.substr(l, r - l + 1);
+    return (l == std::string::npos) ? std::string{} : s.substr(l, r - l + 1);
 }
 
-// Returns the config directory alongside the executable
 static std::filesystem::path getConfigDir() {
     wchar_t buf[MAX_PATH];
-    DWORD len = GetModuleFileNameW(NULL, buf, MAX_PATH);
-    if (len == 0 || len == MAX_PATH) {
-        throw std::runtime_error("Unable to determine executable path");
-    }
-    std::filesystem::path exePath(buf);
-    auto exeDir  = exePath.parent_path();       // e.g. build/Debug
-    auto buildDir = exeDir.parent_path();       // e.g. build/
-    return buildDir / "config";
+    const DWORD len = GetModuleFileNameW(NULL, buf, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) throw std::runtime_error("Unable to determine executable path");
+    return std::filesystem::path(buf).parent_path().parent_path() / "config";
 }
 
 int main() {
@@ -44,151 +37,70 @@ int main() {
         boost::asio::io_context ioc;
         auto configDir = getConfigDir();
 
-        // — Load schemas —
-        if (!SchemaLoader::load("L1", (configDir / "L1FeedMessages.csv").string())) {
-            std::cerr << "Failed to load L1 schema\n";
-            return 1;
-        }
-        if (!SchemaLoader::load("L2", (configDir / "MarketDepthMessages.csv").string())) {
-            std::cerr << "Failed to load L2 schema\n";
-            return 1;
-        }
+        if (!SchemaLoader::load("L1", (configDir / "L1FeedMessages.csv").string())) return 1;
+        if (!SchemaLoader::load("L2", (configDir / "MarketDepthMessages.csv").string())) return 1;
 
-        // — Read symbols from CSV —
         std::vector<std::string> symbols;
-        {
-            std::ifstream in(configDir / "symbols.csv");
-            if (!in.is_open()) {
-                std::cerr << "Could not open symbols.csv\n";
-                return 1;
-            }
-            std::string line;
-            while (std::getline(in, line)) {
-                auto s = trim(line);
-                if (!s.empty()) symbols.push_back(s);
-            }
+        std::ifstream in(configDir / "symbols.csv");
+        if (!in.is_open()) return 1;
+        for (std::string line; std::getline(in, line); ) {
+            auto s = trim(line);
+            if (!s.empty()) symbols.push_back(s);
         }
-        if (symbols.empty()) {
-            std::cerr << "No symbols found in symbols.csv\n";
-            return 1;
-        }
+        if (symbols.empty()) return 1;
 
-        // — Start WebSocket server —
         WebSocketServer ws(ioc, 8080);
         ws.start();
         std::cout << "WebSocketServer listening on port 8080\n";
 
-        // — Admin port connection (9300) —
-        ConnectionManager adminConn(ioc, "127.0.0.1", 9300);
-        adminConn.setConnectHandler([&]() {
-            // negotiate protocol
-            adminConn.send("S,SET PROTOCOL,5.2\r\n");
-            // optionally register client or name here...
-        });
-        adminConn.setMessageHandler([&](const std::string& msg) {
-            // print stats and other admin messages
-            std::cout << "[ADMIN] " << msg << "\n";
-        });
-        adminConn.start();
-        std::cout << "Connecting to Admin port on 127.0.0.1:9300\n";
+        ConnectionManager admin(ioc, "127.0.0.1", 9300);
+        admin.setConnectHandler([&]() { admin.send("S,SET PROTOCOL,6.2\r\n"); });
+        admin.setMessageHandler([&](const std::string& msg) { std::cout << "[ADMIN] " << msg << "\n"; });
+        admin.start();
 
-        // — Level 1 feed connection (5009) —
-        ConnectionManager tickConn(ioc, "127.0.0.1", 5009);
-        tickConn.setConnectHandler([&]() {
-            // protocol handshake for L1
-            tickConn.send("S,SET PROTOCOL,5.2\r\n");
-            for (auto& sym : symbols) {
-                std::cout << "requesting symbol ", sym, " \n";
-                // 'w' followed by the uppercase symbol, then CRLF
-                tickConn.send("w" + sym + "\r\n");
-            }
-        });
-        tickConn.setMessageHandler([&](const std::string& msg) {
-            // echo for debug
+        bool l1sub = false, l2sub = false;
+        ConnectionManager l1(ioc, "127.0.0.1", 5009);
+        l1.setConnectHandler([&]() { l1.send("S,SET PROTOCOL,6.2\r\n"); });
+        l1.setMessageHandler([&](const std::string& raw) {
+            auto msg = trim(raw);
             std::cout << "[L1] " << msg << "\n";
-
-            if (msg.rfind("S,KEY,", 0) == 0) {
-                // respond to key challenge
-                tickConn.send(msg + "\r\n");
-                return;
+            if (!l1sub && msg.rfind("S,SERVER CONNECTED", 0) == 0) {
+                for (auto& sym : symbols) l1.send("w" + sym + "\r\n");
+                l1sub = true; return;
             }
-            // skip system messages (starting with S, T, etc.)
-            char mt = msg.empty() ? 0 : msg[0];
-            if (!((mt >= '0' && mt <= '9') || mt == 'Q')) {
-                std::cout << "Skipping non-data L1 msg: " << msg << "\n";
-                return;
-            }
-
-            // Reset & reuse the JSON Document
+            if (msg.rfind("S,KEY,", 0) == 0) { l1.send(msg + "\r\n"); return; }
+            if (msg.empty() || (!isdigit(msg[0]) && msg[0] != 'Q')) return;
             _reuseDoc.SetObject();
-            if (!MessageDecoder::decode(SchemaLoader::fields("L1"), msg, _reuseDoc))
-                return;
-
-            // Tag it
-            auto& a1 = _reuseDoc.GetAllocator();
-            _reuseDoc.AddMember("feed",
-                                rapidjson::Value("L1", a1),
-                                a1);
-            _reuseDoc.AddMember("messageType",
-                                rapidjson::Value(std::string(1,mt).c_str(), a1),
-                                a1);
-
-            // Serialize into the shared buffer
-            _reuseSb.Clear();
-            _reuseWriter.Reset(_reuseSb);
-            _reuseDoc.Accept(_reuseWriter);
-
-            // Broadcast from the shared buffer
+            if (!MessageDecoder::decode(SchemaLoader::fields("L1"), msg, _reuseDoc)) return;
+            auto& a = _reuseDoc.GetAllocator();
+            _reuseDoc.AddMember("feed", "L1", a);
+            _reuseDoc.AddMember("messageType", std::string(1, msg[0]).c_str(), a);
+            _reuseSb.Clear(); _reuseWriter.Reset(_reuseSb); _reuseDoc.Accept(_reuseWriter);
             ws.broadcast(_reuseSb.GetString());
-        });
-        tickConn.start();
-        std::cout << "Connecting to L1 feed on 127.0.0.1:5009\n";
+        }); l1.start();
 
-        // — Level 2 feed connection (9200) —
-        ConnectionManager depthConn(ioc, "127.0.0.1", 9200);
-        depthConn.setConnectHandler([&]() {
-            depthConn.send("S,SET PROTOCOL,5.2\r\n");
-            for (auto& sym : symbols) {
-                depthConn.send("WOR," + sym + "\r\n");
+        ConnectionManager l2(ioc, "127.0.0.1", 9200);
+        l2.setConnectHandler([&]() { l2.send("S,SET PROTOCOL,6.2\r\n"); });
+        l2.setMessageHandler([&](const std::string& raw) {
+            auto msg = trim(raw);
+            std::cout << "[L2] " << msg << "\n";
+            if (!l2sub && msg.rfind("S,SERVER CONNECTED", 0) == 0) {
+                for (auto& sym : symbols) l2.send("WOR," + sym + "\r\n");
+                l2sub = true; return;
             }
-        });
-        depthConn.setMessageHandler([&](const std::string& msg) {
-            // skip non-data codes
-            if (msg.empty()) return;
-            char mt = msg[0];
-            if (!(mt=='0'||mt=='3'||mt=='4'||mt=='5'||
-                  mt=='6'||mt=='7'||mt=='8'||mt=='9')) return;
-
-            // Reset & reuse the JSON Document
+            if (msg.empty() || (msg[0] < '0' || msg[0] > '9')) return;
             _reuseDoc.SetObject();
-            if (!MessageDecoder::decode(SchemaLoader::fields("L2"), msg, _reuseDoc))
-                return;
-
-            // Tag it
+            if (!MessageDecoder::decode(SchemaLoader::fields("L2"), msg, _reuseDoc)) return;
             auto& a2 = _reuseDoc.GetAllocator();
-            _reuseDoc.AddMember("feed",
-                                rapidjson::Value("L2", a2),
-                                a2);
-            _reuseDoc.AddMember("messageType",
-                                rapidjson::Value(std::string(1,mt).c_str(), a2),
-                                a2);
-
-            // Serialize into the shared buffer
-            _reuseSb.Clear();
-            _reuseWriter.Reset(_reuseSb);
-            _reuseDoc.Accept(_reuseWriter);
-
-            // Broadcast from the shared buffer
+            _reuseDoc.AddMember("feed", "L2", a2);
+            _reuseDoc.AddMember("messageType", std::string(1, msg[0]).c_str(), a2);
+            _reuseSb.Clear(); _reuseWriter.Reset(_reuseSb); _reuseDoc.Accept(_reuseWriter);
             ws.broadcast(_reuseSb.GetString());
-        });
-        depthConn.start();
-        std::cout << "Connecting to L2 feed on 127.0.0.1:9200\n";
+        }); l2.start();
 
-        // — Run the I/O loop —
         ioc.run();
         return 0;
-    }
-    catch (const std::exception& ex) {
+    } catch (const std::exception& ex) {
         std::cerr << "Fatal error: " << ex.what() << "\n";
         return 1;
     }

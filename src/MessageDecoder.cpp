@@ -1,9 +1,9 @@
 // File: src/MessageDecoder.cpp
-
 #include "MessageDecoder.h"
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-#include <string_view>
+#include <string>
+#include <vector>
 #include <unordered_set>
 #include <iostream>
 
@@ -15,109 +15,66 @@ bool MessageDecoder::decode(const std::vector<std::string>& keys,
         return false;
     }
 
-    // Fields that should be treated as integers or floats
-    static const std::unordered_set<std::string_view> intFields = {
+    static const std::unordered_set<std::string> intFields = {
         "Order Size","Total Volume","Bid Size","Ask Size",
         "Order Priority","Level Size","Order Count"
     };
-    static const std::unordered_set<std::string_view> floatFields = {
+    static const std::unordered_set<std::string> floatFields = {
         "Price","Most Recent Trade","Open","High","Low","Close"
     };
 
-    // Prepare the JSON document
     doc.SetObject();
     auto& alloc = doc.GetAllocator();
-
-    // Capture raw date/time for later merging
     std::string dateStr, timeStr;
 
-    // Manual CSV parse without istringstream
-    std::string_view csv(csvLine);
+    // Manual split preserving empty fields
+    std::vector<std::string> tokens;
     size_t start = 0;
-    size_t idx = 0;
-    while (start <= csv.size()) {
-        size_t end = csv.find(',', start);
-        if (end == std::string_view::npos)
-            end = csv.size();
-
-        std::string_view token = csv.substr(start, end - start);
-        const std::string& fieldName = (idx < keys.size()
-            ? keys[idx]
-            : "field" + std::to_string(idx));
-        std::string_view fieldKey(fieldName);
-
-        // Save raw Date/Time fields
-        if (fieldName == "Date") {
-            dateStr.assign(token);
-        } else if (fieldName == "Time") {
-            timeStr.assign(token);
-        }
-
-        // Convert to integer if in intFields
-        if (intFields.count(fieldKey)) {
-            try {
-                long long v = std::stoll(std::string(token));
-                doc.AddMember(
-                    rapidjson::Value(fieldKey.data(), alloc),
-                    rapidjson::Value(v),
-                    alloc
-                );
-            } catch (...) {
-                // Fallback to string on parse error
-                doc.AddMember(
-                    rapidjson::Value(fieldKey.data(), alloc),
-                    rapidjson::Value(token.data(), alloc),
-                    alloc
-                );
-            }
-        }
-        // Convert to double if in floatFields
-        else if (floatFields.count(fieldKey)) {
-            try {
-                double v = std::stod(std::string(token));
-                doc.AddMember(
-                    rapidjson::Value(fieldKey.data(), alloc),
-                    rapidjson::Value(v),
-                    alloc
-                );
-            } catch (...) {
-                doc.AddMember(
-                    rapidjson::Value(fieldKey.data(), alloc),
-                    rapidjson::Value(token.data(), alloc),
-                    alloc
-                );
-            }
-        }
-        // Otherwise leave as string
-        else {
-            doc.AddMember(
-                rapidjson::Value(fieldKey.data(), alloc),
-                rapidjson::Value(token.data(), alloc),
-                alloc
-            );
-        }
-
-        ++idx;
+    while (true) {
+        size_t end = csvLine.find(',', start);
+        tokens.emplace_back(csvLine.substr(start, end - start));
+        if (end == std::string::npos) break;
         start = end + 1;
     }
 
-    if (idx == 0) {
-        std::cerr << "MessageDecoder: no tokens in line\n";
-        return false;
+    for (size_t idx = 0; idx < tokens.size(); ++idx) {
+        std::string token = tokens[idx];
+        // Trim whitespace and CR/LF
+        auto l = token.find_first_not_of(" \t\r\n");
+        auto r = token.find_last_not_of(" \t\r\n");
+        token = (l == std::string::npos) ? std::string{} : token.substr(l, r - l + 1);
+
+        const std::string& fieldName = (idx < keys.size()) ? keys[idx] : ("field" + std::to_string(idx));
+
+        if (fieldName == "Date") dateStr = token;
+        else if (fieldName == "Time") timeStr = token;
+
+        // Numeric and default handling
+        if (intFields.count(fieldName)) {
+            try {
+                long long v = std::stoll(token);
+                doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(v), alloc);
+            } catch (...) {
+                doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(token.c_str(), alloc), alloc);
+            }
+        } else if (floatFields.count(fieldName)) {
+            try {
+                double v = std::stod(token);
+                doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(v), alloc);
+            } catch (...) {
+                doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(token.c_str(), alloc), alloc);
+            }
+        } else {
+            doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(token.c_str(), alloc), alloc);
+        }
     }
 
-    // Merge Date+Time into an ISO-8601 timestamp field
     if (!dateStr.empty() && !timeStr.empty()) {
         std::string iso = dateStr + "T" + timeStr + "Z";
-        doc.AddMember(
-            "timestamp",
-            rapidjson::Value(iso.c_str(), alloc),
-            alloc
-        );
-        // Optionally remove the raw Date/Time members
+        doc.AddMember("timestamp", rapidjson::Value(iso.c_str(), alloc), alloc);
         doc.RemoveMember("Date");
         doc.RemoveMember("Time");
     }
 
-    return true;
+    return !tokens.empty();
 }

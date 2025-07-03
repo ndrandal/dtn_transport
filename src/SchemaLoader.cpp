@@ -3,8 +3,17 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 
-// Definition of the static member
+// Helper: trim whitespace and CR/LF from both ends
+static std::string trim(const std::string& s) {
+    auto start = s.find_first_not_of(" \t\r\n");
+    auto end   = s.find_last_not_of(" \t\r\n");
+    return (start == std::string::npos) ? std::string() : s.substr(start, end - start + 1);
+}
+
+// Static member definition
 std::map<std::string, std::vector<std::string>> SchemaLoader::schemas_;
 
 bool SchemaLoader::load(const std::string& id, const std::string& filePath) {
@@ -20,11 +29,17 @@ bool SchemaLoader::load(const std::string& id, const std::string& filePath) {
                   << id << "'\n";
         return false;
     }
+    // Remove BOM if present
+    if (!line.empty() && static_cast<unsigned char>(line[0]) == 0xEF) {
+        line.erase(0, 3);
+    }
+
     std::istringstream ss(line);
     std::string token;
     std::vector<std::string> fields;
     while (std::getline(ss, token, ',')) {
-        fields.push_back(token);
+        auto t = trim(token);
+        fields.push_back(std::move(t));
     }
     if (fields.empty()) {
         std::cerr << "SchemaLoader: no fields parsed for id '"

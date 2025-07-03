@@ -32,6 +32,7 @@ void ConnectionManager::stop() {
 
 void ConnectionManager::send(const std::string& cmd) {
     // post to io_context so it's safe even if called from a handler
+    std::cout << "Sending: " << cmd << "\n";
     boost::asio::post(ioc_, [this, cmd]() {
         boost::system::error_code ec;
         boost::asio::write(socket_, boost::asio::buffer(cmd), ec);

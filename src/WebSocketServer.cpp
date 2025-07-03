@@ -16,9 +16,9 @@ void WebSocketServer::start() {
 }
 
 void WebSocketServer::broadcast(const std::string& message) {
+    std::cout << message << "\n";
     std::lock_guard lock(sessionsMutex_);
-    std::cout << "Broadcasting message to " << sessions_.size()
-        << " session(s)\n";
+
     for (auto& session : sessions_) {
         session->send(message);
     }
