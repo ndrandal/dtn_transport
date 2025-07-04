@@ -15,19 +15,20 @@ bool MessageDecoder::decode(const std::vector<std::string>& keys,
         return false;
     }
 
+    // Define numeric field names for type conversion
     static const std::unordered_set<std::string> intFields = {
-        "Order Size","Total Volume","Bid Size","Ask Size",
-        "Order Priority","Level Size","Order Count"
+        "Order Size", "Total Volume", "Bid Size", "Ask Size",
+        "Order Priority", "Level Size", "Order Count"
     };
     static const std::unordered_set<std::string> floatFields = {
-        "Price","Most Recent Trade","Open","High","Low","Close"
+        "Price", "Most Recent Trade", "Open", "High", "Low", "Close"
     };
 
     doc.SetObject();
     auto& alloc = doc.GetAllocator();
     std::string dateStr, timeStr;
 
-    // Manual split preserving empty fields
+    // Split the CSV line by commas, preserving empty fields
     std::vector<std::string> tokens;
     size_t start = 0;
     while (true) {
@@ -37,27 +38,54 @@ bool MessageDecoder::decode(const std::vector<std::string>& keys,
         start = end + 1;
     }
 
-    for (size_t idx = 0; idx < tokens.size(); ++idx) {
-        std::string token = tokens[idx];
-        // Trim whitespace and CR/LF
+    // If a message type is present, adjust for message-specific format differences
+    if (!tokens.empty()) {
+        std::string msgTypeToken = tokens[0];
+        if (msgTypeToken == "5") {
+            // Message type '5' (order remove) omits several fields in the L2 schema.
+            // Insert empty placeholders for omitted fields to align tokens with schema keys.
+            std::vector<size_t> omitPositions = {3, 5, 6, 7, 8, 9, 10};
+            // Insert from lowest to highest index (each insertion increases subsequent indices)
+            for (size_t posIndex = 0; posIndex < omitPositions.size(); ++posIndex) {
+                size_t pos = omitPositions[posIndex];
+                if (pos <= tokens.size()) {
+                    tokens.insert(tokens.begin() + pos, std::string());  // empty placeholder
+                }
+            }
+        }
+        // (If other message types needed special handling, it can be added here similarly)
+    }
+
+    // Populate JSON fields for all keys, using tokens or null if token is missing
+    for (size_t idx = 0; idx < keys.size(); ++idx) {
+        // Get token if available, otherwise use empty string for missing field
+        std::string token = (idx < tokens.size() ? tokens[idx] : "");
+        // Trim whitespace and CR/LF from token
         auto l = token.find_first_not_of(" \t\r\n");
         auto r = token.find_last_not_of(" \t\r\n");
-        token = (l == std::string::npos) ? std::string{} : token.substr(l, r - l + 1);
+        token = (l == std::string::npos) ? std::string() : token.substr(l, r - l + 1);
 
-        const std::string& fieldName = (idx < keys.size()) ? keys[idx] : ("field" + std::to_string(idx));
+        const std::string& fieldName = keys[idx];
+        if (fieldName == "Date") {
+            dateStr = token;
+        } else if (fieldName == "Time") {
+            timeStr = token;
+        }
 
-        if (fieldName == "Date") dateStr = token;
-        else if (fieldName == "Time") timeStr = token;
-
-        // Numeric and default handling
-        if (intFields.count(fieldName)) {
+        if (token.empty()) {
+            // If field is empty/missing, add as JSON null
+            doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(rapidjson::kNullType), alloc);
+        } else if (intFields.count(fieldName)) {
+            // Parse integer fields
             try {
                 long long v = std::stoll(token);
                 doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(v), alloc);
             } catch (...) {
+                // If parsing fails, keep as string
                 doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(token.c_str(), alloc), alloc);
             }
         } else if (floatFields.count(fieldName)) {
+            // Parse floating-point fields
             try {
                 double v = std::stod(token);
                 doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(v), alloc);
@@ -65,13 +93,15 @@ bool MessageDecoder::decode(const std::vector<std::string>& keys,
                 doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(token.c_str(), alloc), alloc);
             }
         } else {
+            // Default: treat as string
             doc.AddMember(rapidjson::Value(fieldName.c_str(), alloc), rapidjson::Value(token.c_str(), alloc), alloc);
         }
     }
 
+    // Combine Date and Time fields into a single ISO timestamp, if both are present
     if (!dateStr.empty() && !timeStr.empty()) {
-        std::string iso = dateStr + "T" + timeStr + "Z";
-        doc.AddMember("timestamp", rapidjson::Value(iso.c_str(), alloc), alloc);
+        std::string isoTimestamp = dateStr + "T" + timeStr + "Z";
+        doc.AddMember(rapidjson::Value("timestamp", alloc), rapidjson::Value(isoTimestamp.c_str(), alloc), alloc);
         doc.RemoveMember("Date");
         doc.RemoveMember("Time");
     }

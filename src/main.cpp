@@ -1,4 +1,3 @@
-
 // File: src/main.cpp
 #include "SchemaLoader.h"
 #include "MessageDecoder.h"
@@ -14,7 +13,7 @@
 #include <vector>
 #include <string>
 
-static thread_local rapidjson::Document    _reuseDoc;
+static thread_local rapidjson::Document     _reuseDoc;
 static thread_local rapidjson::StringBuffer _reuseSb;
 static thread_local rapidjson::Writer<rapidjson::StringBuffer> _reuseWriter{_reuseSb};
 
@@ -55,7 +54,9 @@ int main() {
 
         ConnectionManager admin(ioc, "127.0.0.1", 9300);
         admin.setConnectHandler([&]() { admin.send("S,SET PROTOCOL,6.2\r\n"); });
-        admin.setMessageHandler([&](const std::string& msg) { std::cout << "[ADMIN] " << msg << "\n"; });
+        admin.setMessageHandler([&](const std::string& msg) {
+            std::cout << "[ADMIN] " << msg << "\n";
+        });
         admin.start();
 
         bool l1sub = false, l2sub = false;
@@ -66,18 +67,30 @@ int main() {
             std::cout << "[L1] " << msg << "\n";
             if (!l1sub && msg.rfind("S,SERVER CONNECTED", 0) == 0) {
                 for (auto& sym : symbols) l1.send("w" + sym + "\r\n");
-                l1sub = true; return;
+                l1sub = true;
+                return;
             }
-            if (msg.rfind("S,KEY,", 0) == 0) { l1.send(msg + "\r\n"); return; }
-            if (msg.empty() || (!isdigit(msg[0]) && msg[0] != 'Q')) return;
+            if (msg.rfind("S,KEY,", 0) == 0) {
+                l1.send(msg + "\r\n");
+                return;
+            }
+            if (msg.empty() || (!isdigit(msg[0]) && msg[0] != 'Q')) {
+                return;
+            }
             _reuseDoc.SetObject();
-            if (!MessageDecoder::decode(SchemaLoader::fields("L1"), msg, _reuseDoc)) return;
+            if (!MessageDecoder::decode(SchemaLoader::fields("L1"), msg, _reuseDoc)) {
+                return;
+            }
+            // Remove duplicate message type field from schema, if present
             auto& a = _reuseDoc.GetAllocator();
             _reuseDoc.AddMember("feed", "L1", a);
-            _reuseDoc.AddMember("messageType", std::string(1, msg[0]).c_str(), a);
-            _reuseSb.Clear(); _reuseWriter.Reset(_reuseSb); _reuseDoc.Accept(_reuseWriter);
+            _reuseDoc.AddMember("messageType", rapidjson::Value(std::string(1, msg[0]).c_str(), a), a);
+            _reuseSb.Clear();
+            _reuseWriter.Reset(_reuseSb);
+            _reuseDoc.Accept(_reuseWriter);
             ws.broadcast(_reuseSb.GetString());
-        }); l1.start();
+        });
+        l1.start();
 
         ConnectionManager l2(ioc, "127.0.0.1", 9200);
         l2.setConnectHandler([&]() { l2.send("S,SET PROTOCOL,6.2\r\n"); });
@@ -86,21 +99,32 @@ int main() {
             std::cout << "[L2] " << msg << "\n";
             if (!l2sub && msg.rfind("S,SERVER CONNECTED", 0) == 0) {
                 for (auto& sym : symbols) l2.send("WOR," + sym + "\r\n");
-                l2sub = true; return;
+                l2sub = true;
+                return;
             }
-            if (msg.empty() || (msg[0] < '0' || msg[0] > '9')) return;
+            if (msg.empty() || (msg[0] < '0' || msg[0] > '9')) {
+                return;
+            }
             _reuseDoc.SetObject();
-            if (!MessageDecoder::decode(SchemaLoader::fields("L2"), msg, _reuseDoc)) return;
+            if (!MessageDecoder::decode(SchemaLoader::fields("L2"), msg, _reuseDoc)) {
+                return;
+            }
+            // Remove duplicate message type field from schema, if present
+            _reuseDoc.RemoveMember("Message Type");
             auto& a2 = _reuseDoc.GetAllocator();
             _reuseDoc.AddMember("feed", "L2", a2);
-            _reuseDoc.AddMember("messageType", std::string(1, msg[0]).c_str(), a2);
-            _reuseSb.Clear(); _reuseWriter.Reset(_reuseSb); _reuseDoc.Accept(_reuseWriter);
+            _reuseDoc.AddMember("messageType", rapidjson::Value(std::string(1, msg[0]).c_str(), a2), a2);
+            _reuseSb.Clear();
+            _reuseWriter.Reset(_reuseSb);
+            _reuseDoc.Accept(_reuseWriter);
             ws.broadcast(_reuseSb.GetString());
-        }); l2.start();
+        });
+        l2.start();
 
         ioc.run();
         return 0;
-    } catch (const std::exception& ex) {
+    }
+    catch (const std::exception& ex) {
         std::cerr << "Fatal error: " << ex.what() << "\n";
         return 1;
     }
