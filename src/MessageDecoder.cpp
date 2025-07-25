@@ -17,11 +17,19 @@ bool MessageDecoder::decode(const std::vector<std::string>& keys,
 
     // Define numeric field names for type conversion
     static const std::unordered_set<std::string> intFields = {
-        "Order Size", "Total Volume", "Bid Size", "Ask Size",
-        "Order Priority", "Level Size", "Order Count"
+        "Most-Recent-Trade-Size",
+        "Total-Volume",
+        "Bid-Size",
+        "Ask-Size"
     };
     static const std::unordered_set<std::string> floatFields = {
-        "Price", "Most Recent Trade", "Open", "High", "Low", "Close"
+        "Most-Recent-Trade",
+        "Bid",
+        "Ask",
+        "Open",
+        "High",
+        "Low",
+        "Close"
     };
 
     doc.SetObject();
