@@ -1,6 +1,9 @@
 // File: src/WebSocketServer.cpp
 #include "WebSocketServer.h"
 #include <iostream>
+#include <fstream>   // std::ofstream
+#include <string>    // std::string + << overload
+#include <mutex>     // std::mutex, std::lock_guard
 
 using tcp   = boost::asio::ip::tcp;
 namespace ws = boost::beast::websocket;
@@ -15,13 +18,25 @@ void WebSocketServer::start() {
     doAccept();
 }
 
-void WebSocketServer::broadcast(const std::string& message) {
-    std::cout << message << "\n";
-    std::lock_guard lock(sessionsMutex_);
-
-    for (auto& session : sessions_) {
-        session->send(message);
+void WebSocketServer::broadcast(const std::string& message)
+{
+    /* ---------- write to file ---------- */
+    static std::mutex          fileMtx;                     // thread‑safe
+    static std::ofstream       dump("feed_capture.txt",
+                                    std::ios::app);         // append mode
+    if (dump.is_open()) {
+        std::lock_guard lk(fileMtx);
+        dump << message << '\n';
+        // flush() is optional; comment out if perf matters
+        // dump.flush();
     }
+
+    /* ---------- normal console + client fan‑out ---------- */
+    std::cout << message << '\n';
+
+    std::lock_guard lock(sessionsMutex_);
+    for (auto& session : sessions_)
+        session->send(message);
 }
 
 void WebSocketServer::doAccept() {
